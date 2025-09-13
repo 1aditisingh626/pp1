@@ -43,7 +43,6 @@ def detect_priority(text):
             return "High"
     return "Medium"
 
-
 def compute_vendor_trust(vendor_id):
     if vendor_id is None:
         return 0, 0, 0  # if vendor_id is missing, return zeros
@@ -54,7 +53,7 @@ def compute_vendor_trust(vendor_id):
             supabase.table("users")
             .select("rating")
             .eq("vendor_id", vendor_id)
-            .is_neq("rating", None)  # safer None check
+            .neq("rating", None)  # Use .neq() instead of .is_neq()
             .execute()
             .data
         )
@@ -90,6 +89,7 @@ def compute_vendor_trust(vendor_id):
         resolved_ratio = 0
 
     return trust, avg_rating, resolved_ratio
+
 
 
 
@@ -227,58 +227,46 @@ def page_submit_complaint(users, products, vendors):
             st.warning("Check if this email is already used or try again later.")
 
 
-def page_track_complaints(users, products, vendors):
-    st.header("📍 Track Your Complaints")
-    st.markdown("Enter your User ID to see the status of all your complaints, insights, and suggestions.")
+def page_track_complaints(users: pd.DataFrame, products: pd.DataFrame, vendors: pd.DataFrame):
+    st.header("📋 Track Complaints")
 
-    user_id = st.text_input("Your User ID")
+    # --- Check if users DataFrame is empty ---
+    if users.empty:
+        st.info("No users available.")
+        return
 
-    if st.button("Track"):
-        data = supabase.table("users").select("*").eq("user_id", user_id).execute().data
-        df = pd.DataFrame(data)
+    # --- Dropdown to select user ---
+    user_options = dict(zip(users["name"], users["user_id"]))
+    selected_name = st.selectbox("Select User", list(user_options.keys()))
+    user_id = str(user_options[selected_name]).strip()
 
-        if df.empty:
-            st.warning("No complaints found for this user. Make sure you entered the correct User ID.")
-        else:
-            # Merge with products and vendors for names
-            df = df.merge(products[['product_id', 'product_name']], on='product_id', how='left')
-            df = df.merge(vendors[['vendor_id', 'vendor_name']], on='vendor_id', how='left')
+    st.write(f"Selected User ID: {user_id} (type: {type(user_id).__name__})")
 
-            # Prepare display dataframe
-            df_display = df[['product_name', 'vendor_name', 'complaint_text', 'complaint_status',
-                             'complaint_priority', 'review_sentiment', 'rating']].copy()
-            df_display.rename(columns={'complaint_priority': 'priority', 'review_sentiment': 'sentiment'}, inplace=True)
+    # --- Filter complaints directly from the users table ---
+    user_complaints = users[users['user_id'] == user_id]
 
-            st.subheader("📋 Your Complaints")
-            st.dataframe(df_display)
+    if user_complaints.empty:
+        st.info("No complaints submitted by this user yet.")
+    else:
+        st.subheader("User Complaints")
+        # Select relevant complaint columns
+        complaint_columns = [
+            "product_id", "vendor_id", "complaint_text",
+            "complaint_status", "complaint_priority", "complaint_date",
+            "complaint_image_url", "rating", "review", "review_date", "review_sentiment"
+        ]
+        display_df = user_complaints[complaint_columns].copy()
 
-            st.markdown("---")
-            st.subheader("💡 Insights")
+        # Merge product and vendor names for clarity
+        display_df = display_df.merge(products[['product_id', 'product_name']], on='product_id', how='left')
+        display_df = display_df.merge(vendors[['vendor_id', 'vendor_name']], on='vendor_id', how='left')
 
-            # Insights
-            total_complaints = len(df_display)
-            resolved = len(df_display[df_display['complaint_status'].str.lower() == 'resolved'])
-            pending = len(df_display[df_display['complaint_status'].str.lower() == 'pending'])
-            high_priority = len(df_display[df_display['priority'] == 'High'])
-            positive_reviews = len(df_display[df_display['sentiment'] == 'Positive'])
-            negative_reviews = len(df_display[df_display['sentiment'] == 'Negative'])
-            neutral_reviews = len(df_display[df_display['sentiment'] == 'Neutral'])
+        st.dataframe(display_df)
 
-            col1, col2, col3 = st.columns(3)
-            col1.metric("Total Complaints", total_complaints)
-            col2.metric("Resolved", resolved)
-            col3.metric("Pending", pending)
-
-            col4, col5, col6 = st.columns(3)
-            col4.metric("High Priority", high_priority)
-            col5.metric("Positive Reviews", positive_reviews)
-            col6.metric("Negative Reviews", negative_reviews)
-
-            st.write(f"Neutral Reviews: {neutral_reviews}")
-
-            st.markdown("---")
-            st.markdown(
-                "**Tip:** Keep your complaint descriptions clear and detailed. High-priority issues like expired or contaminated products are flagged automatically.")
+    # --- Display user details ---
+    st.subheader("User Details")
+    user_info = user_complaints.iloc[0].to_dict()
+    st.json(user_info)
 
 
 def page_vendor_dashboard(users, products, vendors):
